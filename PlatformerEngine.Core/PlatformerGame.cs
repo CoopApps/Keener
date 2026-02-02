@@ -214,11 +214,80 @@ namespace PlatformerEngine.Core
             sceneManager.RegisterScene("HighScores",
                 new HighScoreScreen(defaultFont));
 
-            // Game scenes would be registered here
-            // sceneManager.RegisterScene("GameLevel", new GameLevelScene(...));
-            // sceneManager.RegisterScene("WorldMap", new WorldMapScreen(...));
+            // Game scenes
+            sceneManager.RegisterScene("GameLevel",
+                new GameLevelScene("level1", defaultFont));
+
+            sceneManager.RegisterScene("WorldMap",
+                new WorldMapScreen(CreateDefaultWorldMap(), defaultFont));
+
+            sceneManager.RegisterScene("PauseMenu",
+                new PauseMenuScene(defaultFont));
+
+            sceneManager.RegisterScene("GameOver",
+                new GameOverScene(defaultFont));
+
+            sceneManager.RegisterScene("LevelComplete",
+                new LevelCompleteScreen(new LevelStats(), defaultFont));
+
+            // Demo scene
+            sceneManager.RegisterScene("Demo",
+                new DemoScene("Demos/demo1.json", defaultFont));
+
+            // Bonus game
+            sceneManager.RegisterScene("PaddleWar",
+                new PaddleWarScene(defaultFont));
 
             Console.WriteLine("Scenes Registered");
+        }
+
+        /// <summary>
+        /// Create a default world map for testing
+        /// </summary>
+        private WorldMapData CreateDefaultWorldMap()
+        {
+            var worldMap = new WorldMapData
+            {
+                MapName = "Main World",
+                BackgroundTexture = "world_map_bg"
+            };
+
+            // Create some test level nodes
+            var node1 = new LevelNode
+            {
+                Id = "level1",
+                LevelName = "Level 1",
+                Position = new Vector2(100, 300),
+                IsUnlocked = true
+            };
+
+            var node2 = new LevelNode
+            {
+                Id = "level2",
+                LevelName = "Level 2",
+                Position = new Vector2(250, 250),
+                IsUnlocked = false
+            };
+
+            var node3 = new LevelNode
+            {
+                Id = "level3",
+                LevelName = "Level 3",
+                Position = new Vector2(400, 300),
+                IsUnlocked = false
+            };
+
+            // Connect nodes
+            node1.ConnectedNodeIds.Add("level2");
+            node2.ConnectedNodeIds.Add("level1");
+            node2.ConnectedNodeIds.Add("level3");
+            node3.ConnectedNodeIds.Add("level2");
+
+            worldMap.Nodes.Add(node1);
+            worldMap.Nodes.Add(node2);
+            worldMap.Nodes.Add(node3);
+
+            return worldMap;
         }
 
         /// <summary>

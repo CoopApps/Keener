@@ -2,6 +2,7 @@ using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using PlatformerEngine.Core.Graphics;
 using PlatformerEngine.Core.Input;
+using PlatformerEngine.Core.Combat;
 using System;
 
 namespace PlatformerEngine.Core.Entities
@@ -9,8 +10,15 @@ namespace PlatformerEngine.Core.Entities
     /// <summary>
     /// Player character with platformer physics
     /// </summary>
-    public class Player : Entity
+    public class Player : Entity, IHasHealth, IHasAttack
     {
+        // Combat components
+        public HealthComponent Health { get; private set; }
+        public AttackComponent Attack { get; private set; }
+
+        // Lives system
+        public int Lives { get; set; } = 3;
+        public int Score { get; set; } = 0;
         // Movement constants
         public float WalkSpeed { get; set; } = 120f;
         public float RunSpeed { get; set; } = 200f;
@@ -54,6 +62,37 @@ namespace PlatformerEngine.Core.Entities
             IsSolid = true;
 
             input = InputManager.Instance;
+
+            // Initialize combat components
+            Health = new HealthComponent
+            {
+                MaxHealth = 100,
+                CurrentHealth = 100
+            };
+
+            Attack = new AttackComponent
+            {
+                Damage = 10,
+                AttackRange = 20f,
+                AttackCooldown = 0.5f
+            };
+
+            Health.OnDeath += OnPlayerDeath;
+        }
+
+        private void OnPlayerDeath(HealthComponent health)
+        {
+            Lives--;
+            if (Lives > 0)
+            {
+                // Will respawn
+                IsActive = false;
+            }
+            else
+            {
+                // Game over
+                IsActive = false;
+            }
         }
 
         public override void Update(GameTime gameTime, TileMap tileMap)
@@ -367,9 +406,21 @@ namespace PlatformerEngine.Core.Entities
 
         public override void OnDamage(int damage, Entity source)
         {
-            // Handle player taking damage
+            // Use health component
+            Health?.TakeDamage(damage, DamageType.Physical, source);
             // Could trigger hurt animation, invincibility frames, etc.
-            // Override for custom behavior
+        }
+
+        /// <summary>
+        /// Perform attack
+        /// </summary>
+        public void PerformAttack()
+        {
+            if (Attack != null && Attack.CanAttack())
+            {
+                Attack.UpdateCooldown(0); // Reset attack
+                // Trigger attack animation/projectile
+            }
         }
 
         /// <summary>

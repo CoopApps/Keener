@@ -10,7 +10,7 @@ namespace PlatformerEngine.Core.Scenes
     /// </summary>
     public abstract class Scene
     {
-        public string Name { get; protected set; }
+        public string Name { get; set; }
         public bool IsInitialized { get; private set; }
         public bool IsActive { get; set; } = true;
         public bool DrawBelow { get; set; } = false;  // Draw scenes below this one?
@@ -19,9 +19,8 @@ namespace PlatformerEngine.Core.Scenes
         protected Game game;
         protected SceneManager sceneManager;
 
-        public Scene(string name)
+        public Scene()
         {
-            Name = name;
         }
 
         /// <summary>
@@ -78,6 +77,9 @@ namespace PlatformerEngine.Core.Scenes
     /// </summary>
     public class SceneManager
     {
+        private static SceneManager instance;
+        public static SceneManager Instance => instance;
+
         private Stack<Scene> sceneStack = new Stack<Scene>();
         private Dictionary<string, Scene> scenes = new Dictionary<string, Scene>();
 
@@ -91,17 +93,39 @@ namespace PlatformerEngine.Core.Scenes
 
         public Scene CurrentScene => currentScene;
         public bool IsTransitioning => isTransitioning;
+        public GraphicsDevice GraphicsDevice { get; private set; }
 
         public SceneManager(Game game)
         {
             this.game = game;
+            this.GraphicsDevice = game.GraphicsDevice;
+            instance = this;
         }
 
         /// <summary>
-        /// Register a scene
+        /// Register a scene with a name
+        /// </summary>
+        public void RegisterScene(string name, Scene scene)
+        {
+            scene.Name = name;
+            scenes[name] = scene;
+
+            if (!scene.IsInitialized)
+            {
+                scene.Initialize(game, this);
+            }
+        }
+
+        /// <summary>
+        /// Register a scene (uses scene's Name property)
         /// </summary>
         public void RegisterScene(Scene scene)
         {
+            if (string.IsNullOrEmpty(scene.Name))
+            {
+                throw new ArgumentException("Scene must have a Name set");
+            }
+
             scenes[scene.Name] = scene;
 
             if (!scene.IsInitialized)
@@ -331,19 +355,34 @@ namespace PlatformerEngine.Core.Scenes
         private Rectangle screenBounds;
         public Color FadeColor { get; set; } = Color.Black;
 
-        public FadeTransition(GraphicsDevice graphicsDevice, float duration = 1.0f)
+        public FadeTransition(float duration = 1.0f)
         {
             Duration = duration;
-            pixelTexture = new Texture2D(graphicsDevice, 1, 1);
-            pixelTexture.SetData(new[] { Color.White });
-            screenBounds = graphicsDevice.Viewport.Bounds;
+        }
+
+        private void EnsureTextureCreated(GraphicsDevice graphicsDevice)
+        {
+            if (pixelTexture == null)
+            {
+                pixelTexture = new Texture2D(graphicsDevice, 1, 1);
+                pixelTexture.SetData(new[] { Color.White });
+                screenBounds = graphicsDevice.Viewport.Bounds;
+            }
         }
 
         public override void Draw(SpriteBatch spriteBatch)
         {
-            // Fade out first half, fade in second half
-            float alpha = Progress < 0.5f ? Progress * 2f : (1f - Progress) * 2f;
-            spriteBatch.Draw(pixelTexture, screenBounds, FadeColor * alpha);
+            if (spriteBatch.GraphicsDevice != null)
+            {
+                EnsureTextureCreated(spriteBatch.GraphicsDevice);
+
+                // Fade out first half, fade in second half
+                float alpha = Progress < 0.5f ? Progress * 2f : (1f - Progress) * 2f;
+
+                spriteBatch.Begin();
+                spriteBatch.Draw(pixelTexture, screenBounds, FadeColor * alpha);
+                spriteBatch.End();
+            }
         }
     }
 
@@ -363,19 +402,32 @@ namespace PlatformerEngine.Core.Scenes
         public Direction SlideDirection { get; set; }
         private int screenWidth;
         private int screenHeight;
+        private bool initialized;
 
-        public SlideTransition(GraphicsDevice graphicsDevice, Direction direction, float duration = 0.5f)
+        public SlideTransition(Direction direction, float duration = 0.5f)
         {
             SlideDirection = direction;
             Duration = duration;
-            screenWidth = graphicsDevice.Viewport.Width;
-            screenHeight = graphicsDevice.Viewport.Height;
+        }
+
+        private void EnsureInitialized(GraphicsDevice graphicsDevice)
+        {
+            if (!initialized)
+            {
+                screenWidth = graphicsDevice.Viewport.Width;
+                screenHeight = graphicsDevice.Viewport.Height;
+                initialized = true;
+            }
         }
 
         public override void Draw(SpriteBatch spriteBatch)
         {
-            // Slide transition would manipulate the SpriteBatch transform
-            // This is a simplified version - full implementation would be more complex
+            if (spriteBatch.GraphicsDevice != null)
+            {
+                EnsureInitialized(spriteBatch.GraphicsDevice);
+                // Slide transition would manipulate the SpriteBatch transform
+                // This is a simplified version - full implementation would be more complex
+            }
         }
     }
 

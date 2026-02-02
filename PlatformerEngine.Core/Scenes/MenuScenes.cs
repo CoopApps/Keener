@@ -21,6 +21,7 @@ namespace PlatformerEngine.Core.Scenes
             Controls,
             Sound,
             HighScores,
+            PaddleWar,
             Quit
         }
 
@@ -32,6 +33,7 @@ namespace PlatformerEngine.Core.Scenes
             { MenuOption.Controls, "Controls" },
             { MenuOption.Sound, "Sound Options" },
             { MenuOption.HighScores, "High Scores" },
+            { MenuOption.PaddleWar, "Paddle War" },
             { MenuOption.Quit, "Quit" }
         };
 
@@ -59,11 +61,11 @@ namespace PlatformerEngine.Core.Scenes
             // Navigate menu
             if (input.IsActionPressed(InputAction.MoveUp))
             {
-                selectedOption = (MenuOption)(((int)selectedOption - 1 + 6) % 6);
+                selectedOption = (MenuOption)(((int)selectedOption - 1 + 7) % 7);
             }
             else if (input.IsActionPressed(InputAction.MoveDown))
             {
-                selectedOption = (MenuOption)(((int)selectedOption + 1) % 6);
+                selectedOption = (MenuOption)(((int)selectedOption + 1) % 7);
             }
 
             // Select option
@@ -105,6 +107,10 @@ namespace PlatformerEngine.Core.Scenes
                     SceneManager.Instance.PushScene("HighScores");
                     break;
 
+                case MenuOption.PaddleWar:
+                    SceneManager.Instance.ChangeScene("PaddleWar", new FadeTransition(0.3f));
+                    break;
+
                 case MenuOption.Quit:
                     // Exit game
                     Environment.Exit(0);
@@ -123,7 +129,7 @@ namespace PlatformerEngine.Core.Scenes
             }
 
             // Draw menu options
-            for (int i = 0; i < 6; i++)
+            for (int i = 0; i < 7; i++)
             {
                 var option = (MenuOption)i;
                 string text = menuText[option];
