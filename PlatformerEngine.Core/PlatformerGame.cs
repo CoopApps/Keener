@@ -238,6 +238,16 @@ namespace PlatformerEngine.Core
             sceneManager.RegisterScene("PaddleWar",
                 new PaddleWarScene(defaultFont));
 
+            // Editors
+            sceneManager.RegisterScene("EditorMenu",
+                new EditorMenuScene(defaultFont));
+
+            sceneManager.RegisterScene("LevelEditor",
+                new Editor.LevelEditorScene(defaultFont));
+
+            sceneManager.RegisterScene("WorldMapEditor",
+                new Editor.WorldMapEditorScene(defaultFont));
+
             Console.WriteLine("Scenes Registered");
         }
 

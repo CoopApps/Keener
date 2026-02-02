@@ -18,6 +18,7 @@ namespace PlatformerEngine.Core.Scenes
         {
             NewGame,
             LoadGame,
+            Editor,
             Controls,
             Sound,
             HighScores,
@@ -30,6 +31,7 @@ namespace PlatformerEngine.Core.Scenes
         {
             { MenuOption.NewGame, "New Game" },
             { MenuOption.LoadGame, "Load Game" },
+            { MenuOption.Editor, "Editor" },
             { MenuOption.Controls, "Controls" },
             { MenuOption.Sound, "Sound Options" },
             { MenuOption.HighScores, "High Scores" },
@@ -61,11 +63,11 @@ namespace PlatformerEngine.Core.Scenes
             // Navigate menu
             if (input.IsActionPressed(InputAction.MoveUp))
             {
-                selectedOption = (MenuOption)(((int)selectedOption - 1 + 7) % 7);
+                selectedOption = (MenuOption)(((int)selectedOption - 1 + 8) % 8);
             }
             else if (input.IsActionPressed(InputAction.MoveDown))
             {
-                selectedOption = (MenuOption)(((int)selectedOption + 1) % 7);
+                selectedOption = (MenuOption)(((int)selectedOption + 1) % 8);
             }
 
             // Select option
@@ -93,6 +95,10 @@ namespace PlatformerEngine.Core.Scenes
 
                 case MenuOption.LoadGame:
                     SceneManager.Instance.PushScene("LoadGameMenu");
+                    break;
+
+                case MenuOption.Editor:
+                    SceneManager.Instance.PushScene("EditorMenu");
                     break;
 
                 case MenuOption.Controls:
@@ -129,7 +135,7 @@ namespace PlatformerEngine.Core.Scenes
             }
 
             // Draw menu options
-            for (int i = 0; i < 7; i++)
+            for (int i = 0; i < 8; i++)
             {
                 var option = (MenuOption)i;
                 string text = menuText[option];
