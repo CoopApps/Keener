@@ -130,8 +130,10 @@ All commits pushed and ready for review/merge.
 - [x] Dialogue system with typewriter effect
 - [x] Controls/sound menus
 
-#### Tools (2/2) ✅
-- [x] In-game level editor
+#### Tools (4/4) ✅
+- [x] Comprehensive level editor (tiles, collision, entities)
+- [x] World map editor (visual node editor)
+- [x] Editor menu system
 - [x] JSON level format with compression
 
 #### Bonus (1/1) ✅
@@ -170,6 +172,7 @@ Demo Playback → High Scores → Credits → [Loop]
 Main Menu (US_ControlPanel)
    ├─ New Game → World Map → Level
    ├─ Load Game → World Map → Level
+   ├─ Editor → Level Editor / World Map Editor
    ├─ Controls → View controls
    ├─ Sound → Adjust volumes
    ├─ High Scores → Leaderboard
@@ -213,6 +216,9 @@ PlatformerGame
 │  ├─ DemoScene        │
 │  ├─ PaddleWarScene   │
 │  ├─ WorldMapScreen   │
+│  ├─ EditorMenuScene  │
+│  ├─ LevelEditorScene │
+│  ├─ WorldMapEditorScene
 │  └─ MenuScenes       │
 │                      │
 ├─ InputManager ───────┤
@@ -308,9 +314,11 @@ GameLevelScene ←───────┘
 - `DialogueSystem.cs` - NPC conversations
 - `HUD.cs` - In-game overlay
 
-### Tools
-- `LevelEditor.cs` - In-game level editor
-- `LevelData.cs` - JSON level format
+### Tools & Editors
+- `LevelEditorScene.cs` - Comprehensive level editor (tiles, collision, entities)
+- `WorldMapEditorScene.cs` - Visual world map editor with node connections
+- `EditorMenuScene.cs` - Editor selection menu
+- `LevelData.cs` - JSON level format with compression
 
 ---
 
