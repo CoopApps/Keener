@@ -11,7 +11,7 @@ using System.Linq;
 namespace PlatformerEngine.Core.Editor
 {
     /// <summary>
-    /// World Map Editor - Create and edit world maps with level nodes
+    /// Enhanced World Map Editor with retro UI
     /// </summary>
     public class WorldMapEditorScene : Scenes.Scene
     {
@@ -37,11 +37,15 @@ namespace PlatformerEngine.Core.Editor
         private WorldMapData worldMap;
         private string currentFileName = "NewWorldMap";
 
+        // Undo/Redo
+        private EditorHistory history = new EditorHistory();
+
         // Selection and interaction
         private LevelNode selectedNode;
         private LevelNode connectStartNode;
         private LevelNode hoverNode;
         private Vector2 dragOffset;
+        private Vector2 nodeStartPosition; // For undo
 
         // Camera
         private Vector2 cameraPosition;
@@ -55,19 +59,28 @@ namespace PlatformerEngine.Core.Editor
         private Rectangle screenBounds;
         private bool showGrid = true;
         private int gridSize = 32;
+        private bool enableCRT = false;
+        private bool showScanlines = false;
+
+        // Input tracking
+        private KeyboardState previousKeyboardState;
+        private MouseState previousMouseState;
 
         // Property editing
         private bool isEditingNodeName;
         private string editingNodeName = "";
-        private int editingCursorPos;
+
+        // Animation
+        private float animationTime = 0;
+        private GameTime lastGameTime;
 
         // Node appearance
         private const int NODE_RADIUS = 20;
         private const int NODE_SELECT_RADIUS = 25;
-        private readonly Color NODE_COLOR = new Color(100, 150, 255);
-        private readonly Color NODE_LOCKED_COLOR = new Color(128, 128, 128);
-        private readonly Color NODE_SELECTED_COLOR = Color.Yellow;
-        private readonly Color PATH_COLOR = new Color(255, 255, 255, 128);
+
+        // UI Rectangles
+        private Rectangle topBar;
+        private Rectangle sidePanel;
 
         public WorldMapEditorScene(SpriteFont font)
         {
@@ -83,6 +96,10 @@ namespace PlatformerEngine.Core.Editor
             pixelTexture.SetData(new[] { Color.White });
             screenBounds = Scenes.SceneManager.Instance.GraphicsDevice.Viewport.Bounds;
 
+            // Setup UI rectangles
+            topBar = new Rectangle(0, 0, screenBounds.Width, 80);
+            sidePanel = new Rectangle(screenBounds.Width - 250, 80, 250, screenBounds.Height - 80);
+
             // Initialize empty world map
             if (worldMap == null)
             {
@@ -92,10 +109,16 @@ namespace PlatformerEngine.Core.Editor
                     BackgroundTexture = "world_map_bg"
                 };
             }
+
+            previousKeyboardState = Keyboard.GetState();
+            previousMouseState = Mouse.GetState();
         }
 
         public override void Update(GameTime gameTime)
         {
+            lastGameTime = gameTime;
+            animationTime += (float)gameTime.ElapsedGameTime.TotalSeconds;
+
             var input = InputManager.Instance;
             var mouseState = Mouse.GetState();
             var keyboardState = Keyboard.GetState();
@@ -104,17 +127,103 @@ namespace PlatformerEngine.Core.Editor
             // ESC to exit
             if (input.IsActionPressed(InputAction.Pause))
             {
-                Scenes.SceneManager.Instance.ChangeScene("MainMenu");
-                return;
+                if (isEditingNodeName)
+                {
+                    isEditingNodeName = false;
+                }
+                else
+                {
+                    Scenes.SceneManager.Instance.ChangeScene("MainMenu");
+                    return;
+                }
+            }
+
+            // Handle keyboard shortcuts
+            HandleKeyboardShortcuts(keyboardState);
+
+            // Find node under mouse
+            hoverNode = FindNodeAtPosition(mouseWorldPos);
+
+            // Handle property editing mode
+            if (isEditingNodeName)
+            {
+                HandleNodeNameEditing(keyboardState);
+                previousKeyboardState = keyboardState;
+                previousMouseState = mouseState;
+                return; // Don't process other input while editing
+            }
+
+            // Camera controls
+            HandleCameraControls(mouseState, keyboardState);
+
+            // Handle different editor modes
+            Vector2 mouseScreenPos = new Vector2(mouseState.X, mouseState.Y);
+            bool isOverUI = topBar.Contains(mouseScreenPos) || sidePanel.Contains(mouseScreenPos);
+
+            if (!isOverUI && !isDraggingCamera)
+            {
+                switch (currentMode)
+                {
+                    case EditorMode.Normal:
+                        HandleNormalMode(mouseState, mouseWorldPos);
+                        break;
+
+                    case EditorMode.DraggingNode:
+                        HandleDraggingNode(mouseState, mouseWorldPos);
+                        break;
+
+                    case EditorMode.ConnectingNodes:
+                        HandleConnectingNodes(mouseState, mouseWorldPos);
+                        break;
+                }
+            }
+
+            previousKeyboardState = keyboardState;
+            previousMouseState = mouseState;
+        }
+
+        private void HandleKeyboardShortcuts(KeyboardState keyboardState)
+        {
+            bool ctrl = keyboardState.IsKeyDown(Keys.LeftControl) || keyboardState.IsKeyDown(Keys.RightControl);
+
+            // Undo/Redo
+            if (ctrl && IsKeyPressed(keyboardState, Keys.Z))
+            {
+                history.Undo();
+            }
+            if (ctrl && IsKeyPressed(keyboardState, Keys.Y))
+            {
+                history.Redo();
+            }
+
+            // Save/Load
+            if (ctrl && IsKeyPressed(keyboardState, Keys.S))
+            {
+                SaveWorldMap();
+            }
+            if (ctrl && IsKeyPressed(keyboardState, Keys.O))
+            {
+                LoadWorldMap();
             }
 
             // Tool selection (1-4 keys)
-            if (keyboardState.IsKeyDown(Keys.D1)) currentTool = EditorTool.Select;
-            if (keyboardState.IsKeyDown(Keys.D2)) currentTool = EditorTool.AddNode;
-            if (keyboardState.IsKeyDown(Keys.D3)) currentTool = EditorTool.Connect;
-            if (keyboardState.IsKeyDown(Keys.D4)) currentTool = EditorTool.Delete;
+            if (IsKeyPressed(keyboardState, Keys.D1)) currentTool = EditorTool.Select;
+            if (IsKeyPressed(keyboardState, Keys.D2)) currentTool = EditorTool.AddNode;
+            if (IsKeyPressed(keyboardState, Keys.D3)) currentTool = EditorTool.Connect;
+            if (IsKeyPressed(keyboardState, Keys.D4)) currentTool = EditorTool.Delete;
 
-            // Camera controls (middle mouse or space + drag)
+            // Toggle grid
+            if (IsKeyPressed(keyboardState, Keys.G)) showGrid = !showGrid;
+        }
+
+        private bool IsKeyPressed(KeyboardState current, Keys key)
+        {
+            return current.IsKeyDown(key) && !previousKeyboardState.IsKeyDown(key);
+        }
+
+        private void HandleCameraControls(MouseState mouseState, KeyboardState keyboardState)
+        {
+            // Camera pan (middle mouse or space + drag)
             if (mouseState.MiddleButton == ButtonState.Pressed ||
                 (keyboardState.IsKeyDown(Keys.Space) && mouseState.LeftButton == ButtonState.Pressed))
             {
@@ -136,126 +245,60 @@ namespace PlatformerEngine.Core.Editor
             }
 
             // Camera zoom (mouse wheel)
-            int scrollDelta = mouseState.ScrollWheelValue;
-            static int previousScroll = 0;
-            if (scrollDelta != previousScroll)
+            if (mouseState.ScrollWheelValue != previousMouseState.ScrollWheelValue)
             {
-                float zoomDelta = (scrollDelta - previousScroll) * 0.001f;
+                float zoomDelta = (mouseState.ScrollWheelValue - previousMouseState.ScrollWheelValue) * 0.001f;
                 cameraZoom = MathHelper.Clamp(cameraZoom + zoomDelta, 0.25f, 4.0f);
-                previousScroll = scrollDelta;
-            }
-
-            // Toggle grid (G key)
-            if (keyboardState.IsKeyDown(Keys.G))
-            {
-                showGrid = !showGrid;
-            }
-
-            // Save/Load (Ctrl+S, Ctrl+O)
-            if (keyboardState.IsKeyDown(Keys.LeftControl) || keyboardState.IsKeyDown(Keys.RightControl))
-            {
-                if (keyboardState.IsKeyDown(Keys.S))
-                {
-                    SaveWorldMap();
-                }
-                if (keyboardState.IsKeyDown(Keys.O))
-                {
-                    LoadWorldMap();
-                }
-            }
-
-            // Find node under mouse
-            hoverNode = FindNodeAtPosition(mouseWorldPos);
-
-            // Handle property editing mode
-            if (isEditingNodeName)
-            {
-                HandleNodeNameEditing(keyboardState);
-                return; // Don't process other input while editing
-            }
-
-            // Handle different editor modes
-            switch (currentMode)
-            {
-                case EditorMode.Normal:
-                    HandleNormalMode(mouseState, mouseWorldPos);
-                    break;
-
-                case EditorMode.DraggingNode:
-                    HandleDraggingNode(mouseState, mouseWorldPos);
-                    break;
-
-                case EditorMode.ConnectingNodes:
-                    HandleConnectingNodes(mouseState, mouseWorldPos);
-                    break;
             }
         }
 
         private void HandleNormalMode(MouseState mouseState, Vector2 mouseWorldPos)
         {
             // Left click actions
-            if (mouseState.LeftButton == ButtonState.Pressed)
+            if (mouseState.LeftButton == ButtonState.Pressed && previousMouseState.LeftButton == ButtonState.Released)
             {
-                static bool wasPressed = false;
-                if (!wasPressed)
+                switch (currentTool)
                 {
-                    wasPressed = true;
+                    case EditorTool.Select:
+                        if (hoverNode != null)
+                        {
+                            selectedNode = hoverNode;
+                            dragOffset = selectedNode.Position - mouseWorldPos;
+                            nodeStartPosition = selectedNode.Position; // Store for undo
+                            currentMode = EditorMode.DraggingNode;
+                        }
+                        else
+                        {
+                            selectedNode = null;
+                        }
+                        break;
 
-                    switch (currentTool)
-                    {
-                        case EditorTool.Select:
-                            if (hoverNode != null)
-                            {
-                                selectedNode = hoverNode;
-                                dragOffset = selectedNode.Position - mouseWorldPos;
-                                currentMode = EditorMode.DraggingNode;
-                            }
-                            else
-                            {
-                                selectedNode = null;
-                            }
-                            break;
+                    case EditorTool.AddNode:
+                        AddNode(mouseWorldPos);
+                        break;
 
-                        case EditorTool.AddNode:
-                            AddNode(mouseWorldPos);
-                            break;
+                    case EditorTool.Connect:
+                        if (hoverNode != null)
+                        {
+                            connectStartNode = hoverNode;
+                            currentMode = EditorMode.ConnectingNodes;
+                        }
+                        break;
 
-                        case EditorTool.Connect:
-                            if (hoverNode != null)
-                            {
-                                connectStartNode = hoverNode;
-                                currentMode = EditorMode.ConnectingNodes;
-                            }
-                            break;
-
-                        case EditorTool.Delete:
-                            if (hoverNode != null)
-                            {
-                                DeleteNode(hoverNode);
-                            }
-                            break;
-                    }
+                    case EditorTool.Delete:
+                        if (hoverNode != null)
+                        {
+                            DeleteNode(hoverNode);
+                        }
+                        break;
                 }
-            }
-            else
-            {
-                wasPressed = false;
             }
 
             // Right click to edit properties
-            if (mouseState.RightButton == ButtonState.Pressed)
+            if (mouseState.RightButton == ButtonState.Pressed && previousMouseState.RightButton == ButtonState.Released && hoverNode != null)
             {
-                static bool wasRightPressed = false;
-                if (!wasRightPressed && hoverNode != null)
-                {
-                    wasRightPressed = true;
-                    selectedNode = hoverNode;
-                    StartEditingNodeName();
-                }
-            }
-            else
-            {
-                wasRightPressed = false;
+                selectedNode = hoverNode;
+                StartEditingNodeName();
             }
         }
 
@@ -276,26 +319,23 @@ namespace PlatformerEngine.Core.Editor
             }
             else
             {
+                // Create undo action for node movement
+                var action = new MoveNodeAction(selectedNode, nodeStartPosition, selectedNode.Position);
+                history.ExecuteAction(action);
                 currentMode = EditorMode.Normal;
             }
         }
 
         private void HandleConnectingNodes(MouseState mouseState, Vector2 mouseWorldPos)
         {
-            if (mouseState.LeftButton == ButtonState.Pressed)
+            if (mouseState.LeftButton == ButtonState.Pressed && previousMouseState.LeftButton == ButtonState.Released)
             {
-                static bool wasPressed = false;
-                if (!wasPressed && hoverNode != null && hoverNode != connectStartNode)
+                if (hoverNode != null && hoverNode != connectStartNode)
                 {
-                    wasPressed = true;
                     ConnectNodes(connectStartNode, hoverNode);
                     currentMode = EditorMode.Normal;
                     connectStartNode = null;
                 }
-            }
-            else
-            {
-                wasPressed = false;
             }
 
             // Right click to cancel
@@ -308,29 +348,24 @@ namespace PlatformerEngine.Core.Editor
 
         private void HandleNodeNameEditing(KeyboardState keyboardState)
         {
-            // Get pressed keys
             var pressedKeys = keyboardState.GetPressedKeys();
-            static Keys[] previousKeys = new Keys[0];
-
+            var previousKeys = previousKeyboardState.GetPressedKeys();
             var newKeys = pressedKeys.Except(previousKeys).ToArray();
 
             foreach (var key in newKeys)
             {
                 if (key == Keys.Enter)
                 {
-                    // Finish editing
                     selectedNode.LevelName = editingNodeName;
                     selectedNode.Id = editingNodeName.ToLower().Replace(" ", "_");
                     isEditingNodeName = false;
                 }
                 else if (key == Keys.Escape)
                 {
-                    // Cancel editing
                     isEditingNodeName = false;
                 }
                 else if (key == Keys.Back && editingNodeName.Length > 0)
                 {
-                    // Backspace
                     editingNodeName = editingNodeName.Substring(0, editingNodeName.Length - 1);
                 }
                 else if (key == Keys.Space)
@@ -339,7 +374,6 @@ namespace PlatformerEngine.Core.Editor
                 }
                 else
                 {
-                    // Try to convert key to character
                     string keyString = key.ToString();
                     if (keyString.Length == 1)
                     {
@@ -350,8 +384,6 @@ namespace PlatformerEngine.Core.Editor
                     }
                 }
             }
-
-            previousKeys = pressedKeys;
         }
 
         private void AddNode(Vector2 position)
@@ -362,22 +394,18 @@ namespace PlatformerEngine.Core.Editor
                 Id = $"level{nodeCount + 1}",
                 LevelName = $"Level {nodeCount + 1}",
                 Position = position,
-                IsUnlocked = nodeCount == 0 // First node is unlocked
+                IsUnlocked = nodeCount == 0
             };
 
-            worldMap.Nodes.Add(newNode);
+            var action = new AddNodeAction(worldMap.Nodes, newNode);
+            history.ExecuteAction(action);
             selectedNode = newNode;
         }
 
         private void DeleteNode(LevelNode node)
         {
-            // Remove all connections to this node
-            foreach (var otherNode in worldMap.Nodes)
-            {
-                otherNode.ConnectedNodeIds.Remove(node.Id);
-            }
-
-            worldMap.Nodes.Remove(node);
+            var action = new DeleteNodeAction(worldMap.Nodes, node);
+            history.ExecuteAction(action);
             if (selectedNode == node)
             {
                 selectedNode = null;
@@ -386,14 +414,11 @@ namespace PlatformerEngine.Core.Editor
 
         private void ConnectNodes(LevelNode nodeA, LevelNode nodeB)
         {
-            // Add bidirectional connection
+            // Check if connection already exists
             if (!nodeA.ConnectedNodeIds.Contains(nodeB.Id))
             {
-                nodeA.ConnectedNodeIds.Add(nodeB.Id);
-            }
-            if (!nodeB.ConnectedNodeIds.Contains(nodeA.Id))
-            {
-                nodeB.ConnectedNodeIds.Add(nodeA.Id);
+                var action = new ConnectNodesAction(nodeA, nodeB);
+                history.ExecuteAction(action);
             }
         }
 
@@ -401,7 +426,6 @@ namespace PlatformerEngine.Core.Editor
         {
             isEditingNodeName = true;
             editingNodeName = selectedNode.LevelName;
-            editingCursorPos = editingNodeName.Length;
         }
 
         private LevelNode FindNodeAtPosition(Vector2 worldPos)
@@ -450,6 +474,7 @@ namespace PlatformerEngine.Core.Editor
                 if (File.Exists(path))
                 {
                     worldMap = WorldMapData.Load(path);
+                    history.Clear();
                     Console.WriteLine($"Loaded world map from {path}");
                 }
             }
@@ -461,7 +486,7 @@ namespace PlatformerEngine.Core.Editor
 
         public override void Draw(SpriteBatch spriteBatch, GameTime gameTime)
         {
-            spriteBatch.GraphicsDevice.Clear(new Color(40, 40, 60));
+            spriteBatch.GraphicsDevice.Clear(RetroUI.Black);
 
             // Draw world space (with camera)
             spriteBatch.Begin(transformMatrix: GetCameraMatrix(), samplerState: SamplerState.PointClamp);
@@ -480,7 +505,7 @@ namespace PlatformerEngine.Core.Editor
             {
                 var mouseState = Mouse.GetState();
                 Vector2 mouseWorldPos = ScreenToWorld(new Vector2(mouseState.X, mouseState.Y));
-                DrawLine(spriteBatch, connectStartNode.Position, mouseWorldPos, Color.Yellow, 3);
+                DrawLine(spriteBatch, connectStartNode.Position, mouseWorldPos, RetroUI.Yellow, 3);
             }
 
             // Draw nodes
@@ -495,14 +520,139 @@ namespace PlatformerEngine.Core.Editor
 
             // Draw UI (screen space)
             spriteBatch.Begin(samplerState: SamplerState.PointClamp);
-            DrawUI(spriteBatch);
+
+            // Top bar
+            DrawTopBar(spriteBatch);
+
+            // Side panel
+            DrawSidePanel(spriteBatch);
+
+            // Name editing overlay
+            if (isEditingNodeName)
+            {
+                DrawNameEditingOverlay(spriteBatch);
+            }
+
+            // CRT effects
+            if (enableCRT)
+            {
+                if (showScanlines)
+                {
+                    RetroUI.DrawScanlines(spriteBatch, pixelTexture, screenBounds, 0.2f);
+                }
+                RetroUI.DrawCRTVignette(spriteBatch, pixelTexture, screenBounds);
+            }
+
             spriteBatch.End();
         }
 
-        private Matrix GetCameraMatrix()
+        private void DrawTopBar(SpriteBatch spriteBatch)
         {
-            return Matrix.CreateTranslation(-cameraPosition.X, -cameraPosition.Y, 0) *
-                   Matrix.CreateScale(cameraZoom);
+            RetroUI.DrawPanel(spriteBatch, pixelTexture, topBar, inset: false);
+
+            int x = 10;
+            int y = 10;
+
+            RetroUI.DrawTextWithShadow(spriteBatch, font, "WORLD MAP EDITOR v2.0", new Vector2(x, y), RetroUI.Yellow);
+            y += 25;
+
+            string toolText = $"Tool: {currentTool} [1-4]  Nodes: {worldMap.Nodes.Count}  Zoom: {cameraZoom:F1}x";
+            spriteBatch.DrawString(font, toolText, new Vector2(x, y), RetroUI.White);
+            y += 20;
+
+            string controlsText = "Ctrl+S=Save  Ctrl+O=Load  Right-Click=Edit  ESC=Exit";
+            spriteBatch.DrawString(font, controlsText, new Vector2(x, y), RetroUI.Gray);
+
+            // Undo/Redo status
+            x = screenBounds.Width / 2;
+            y = 15;
+            string undoText = $"Undo: {history.GetUndoDescription()}";
+            string redoText = $"Redo: {history.GetRedoDescription()}";
+            spriteBatch.DrawString(font, undoText, new Vector2(x, y), history.CanUndo ? RetroUI.Cyan : RetroUI.DarkGray);
+            spriteBatch.DrawString(font, redoText, new Vector2(x, y + 20), history.CanRedo ? RetroUI.Cyan : RetroUI.DarkGray);
+        }
+
+        private void DrawSidePanel(SpriteBatch spriteBatch)
+        {
+            RetroUI.DrawPanel(spriteBatch, pixelTexture, sidePanel, inset: true);
+
+            // Tool selection
+            Rectangle toolPanel = new Rectangle(sidePanel.X + 10, sidePanel.Y + 10, sidePanel.Width - 20, 180);
+            RetroUI.DrawWindow(spriteBatch, pixelTexture, toolPanel, "TOOLS", font);
+
+            int y = toolPanel.Y + 35;
+            int x = toolPanel.X + 10;
+            int lineHeight = 28;
+
+            var tools = new[] { EditorTool.Select, EditorTool.AddNode, EditorTool.Connect, EditorTool.Delete };
+            var toolLabels = new[] { "1. Select & Move", "2. Add Node", "3. Connect", "4. Delete" };
+
+            for (int i = 0; i < tools.Length; i++)
+            {
+                bool isSelected = currentTool == tools[i];
+                Rectangle toolRect = new Rectangle(x, y + i * lineHeight, toolPanel.Width - 20, lineHeight - 3);
+
+                if (isSelected)
+                {
+                    spriteBatch.Draw(pixelTexture, toolRect, RetroUI.SelectedColor);
+                }
+
+                Color textColor = isSelected ? RetroUI.Yellow : RetroUI.White;
+                spriteBatch.DrawString(font, toolLabels[i], new Vector2(x + 5, y + i * lineHeight + 4), textColor);
+            }
+
+            // Selected node properties
+            if (selectedNode != null)
+            {
+                Rectangle propPanel = new Rectangle(sidePanel.X + 10, toolPanel.Bottom + 20, sidePanel.Width - 20, 200);
+                RetroUI.DrawWindow(spriteBatch, pixelTexture, propPanel, "NODE PROPERTIES", font);
+
+                int propY = propPanel.Y + 35;
+                int propX = propPanel.X + 10;
+                int propLineHeight = 22;
+
+                spriteBatch.DrawString(font, $"ID: {selectedNode.Id}", new Vector2(propX, propY), RetroUI.White);
+                propY += propLineHeight;
+                spriteBatch.DrawString(font, $"Name: {selectedNode.LevelName}", new Vector2(propX, propY), RetroUI.White);
+                propY += propLineHeight;
+                spriteBatch.DrawString(font, $"Position:", new Vector2(propX, propY), RetroUI.Cyan);
+                propY += propLineHeight;
+                spriteBatch.DrawString(font, $"  X: {selectedNode.Position.X:F0}", new Vector2(propX, propY), RetroUI.Gray);
+                propY += propLineHeight;
+                spriteBatch.DrawString(font, $"  Y: {selectedNode.Position.Y:F0}", new Vector2(propX, propY), RetroUI.Gray);
+                propY += propLineHeight;
+
+                // Unlocked checkbox
+                Vector2 checkPos = new Vector2(propX, propY);
+                bool checkHovered = new Rectangle((int)checkPos.X, (int)checkPos.Y, 100, 16).Contains(Mouse.GetState().Position);
+                RetroUI.DrawCheckbox(spriteBatch, pixelTexture, checkPos, selectedNode.IsUnlocked, "Unlocked", font, checkHovered);
+                propY += propLineHeight;
+
+                spriteBatch.DrawString(font, $"Connections: {selectedNode.ConnectedNodeIds.Count}", new Vector2(propX, propY), RetroUI.White);
+            }
+        }
+
+        private void DrawNameEditingOverlay(SpriteBatch spriteBatch)
+        {
+            int boxWidth = 400;
+            int boxHeight = 120;
+            int boxX = (screenBounds.Width - boxWidth) / 2;
+            int boxY = (screenBounds.Height - boxHeight) / 2;
+
+            Rectangle panelRect = new Rectangle(boxX, boxY, boxWidth, boxHeight);
+            RetroUI.DrawWindow(spriteBatch, pixelTexture, panelRect, "EDIT LEVEL NAME", font);
+
+            int y = panelRect.Y + 40;
+
+            // Input field
+            Rectangle inputRect = new Rectangle(boxX + 20, y, boxWidth - 40, 30);
+            RetroUI.DrawPanel(spriteBatch, pixelTexture, inputRect, inset: true);
+
+            string displayText = editingNodeName + (((int)(animationTime * 2) % 2 == 0) ? "_" : " ");
+            spriteBatch.DrawString(font, displayText, new Vector2(inputRect.X + 5, inputRect.Y + 5), RetroUI.Yellow);
+
+            y += 45;
+            spriteBatch.DrawString(font, "Press ENTER to confirm, ESC to cancel", new Vector2(boxX + 20, y), RetroUI.Gray);
         }
 
         private void DrawGrid(SpriteBatch spriteBatch)
@@ -531,8 +681,8 @@ namespace PlatformerEngine.Core.Editor
             }
 
             // Draw origin
-            DrawLine(spriteBatch, new Vector2(-50, 0), new Vector2(50, 0), Color.Red, 2);
-            DrawLine(spriteBatch, new Vector2(0, -50), new Vector2(0, 50), Color.Green, 2);
+            DrawLine(spriteBatch, new Vector2(-50, 0), new Vector2(50, 0), RetroUI.Red, 2);
+            DrawLine(spriteBatch, new Vector2(0, -50), new Vector2(0, 50), RetroUI.Green, 2);
         }
 
         private void DrawConnections(SpriteBatch spriteBatch)
@@ -544,10 +694,11 @@ namespace PlatformerEngine.Core.Editor
                     var connectedNode = worldMap.Nodes.FirstOrDefault(n => n.Id == connectedId);
                     if (connectedNode != null)
                     {
-                        // Only draw each connection once (from lower ID to higher ID)
+                        // Only draw each connection once
                         if (string.Compare(node.Id, connectedId) < 0)
                         {
-                            DrawLine(spriteBatch, node.Position, connectedNode.Position, PATH_COLOR, 4);
+                            Color pathColor = new Color(255, 255, 255, 128);
+                            DrawLine(spriteBatch, node.Position, connectedNode.Position, pathColor, 4);
                         }
                     }
                 }
@@ -556,13 +707,22 @@ namespace PlatformerEngine.Core.Editor
 
         private void DrawNode(SpriteBatch spriteBatch, LevelNode node, bool isSelected, bool isHovered)
         {
-            Color nodeColor = node.IsUnlocked ? NODE_COLOR : NODE_LOCKED_COLOR;
-            if (isSelected) nodeColor = NODE_SELECTED_COLOR;
-            else if (isHovered) nodeColor = Color.Lerp(nodeColor, Color.White, 0.3f);
+            Color nodeColor = node.IsUnlocked ? RetroUI.Blue : RetroUI.DarkGray;
+
+            // Animation for selected/hovered
+            if (isSelected)
+            {
+                float pulse = (float)Math.Sin(animationTime * 4) * 0.3f + 0.7f;
+                nodeColor = Color.Lerp(nodeColor, RetroUI.Yellow, pulse);
+            }
+            else if (isHovered)
+            {
+                nodeColor = Color.Lerp(nodeColor, RetroUI.White, 0.3f);
+            }
 
             // Draw node circle
             DrawCircle(spriteBatch, node.Position, NODE_RADIUS, nodeColor, filled: true);
-            DrawCircle(spriteBatch, node.Position, NODE_RADIUS, Color.White, filled: false, thickness: 2);
+            DrawCircle(spriteBatch, node.Position, NODE_RADIUS, RetroUI.White, filled: false, thickness: 2);
 
             // Draw stars if node is completed
             if (node.StarsEarned > 0)
@@ -570,7 +730,7 @@ namespace PlatformerEngine.Core.Editor
                 for (int i = 0; i < node.StarsEarned; i++)
                 {
                     Vector2 starPos = node.Position + new Vector2(-10 + i * 10, -NODE_RADIUS - 10);
-                    DrawCircle(spriteBatch, starPos, 3, Color.Yellow, filled: true);
+                    DrawCircle(spriteBatch, starPos, 3, RetroUI.Yellow, filled: true);
                 }
             }
 
@@ -581,111 +741,31 @@ namespace PlatformerEngine.Core.Editor
                 Vector2 textPos = node.Position - new Vector2(textSize.X / 2, NODE_RADIUS + textSize.Y + 5);
 
                 // Text background
-                DrawRectangle(spriteBatch, new Rectangle(
-                    (int)textPos.X - 2,
+                Rectangle textBg = new Rectangle(
+                    (int)textPos.X - 4,
                     (int)textPos.Y - 2,
-                    (int)textSize.X + 4,
+                    (int)textSize.X + 8,
                     (int)textSize.Y + 4
-                ), new Color(0, 0, 0, 192));
+                );
+                spriteBatch.Draw(pixelTexture, textBg, new Color(0, 0, 0, 192));
+                DrawRectangleOutline(spriteBatch, textBg, RetroUI.Cyan, 1);
 
-                spriteBatch.DrawString(font, node.LevelName, textPos, Color.White);
+                spriteBatch.DrawString(font, node.LevelName, textPos, RetroUI.White);
             }
         }
 
-        private void DrawUI(SpriteBatch spriteBatch)
+        private Matrix GetCameraMatrix()
         {
-            if (font == null) return;
-
-            int y = 10;
-            int lineHeight = 20;
-
-            // Tool bar
-            DrawRectangle(spriteBatch, new Rectangle(0, 0, screenBounds.Width, 150), new Color(0, 0, 0, 200));
-
-            DrawText(spriteBatch, "WORLD MAP EDITOR", new Vector2(10, y), Color.Yellow);
-            y += lineHeight * 2;
-
-            DrawText(spriteBatch, $"Tool: {currentTool} (1-4 to switch)", new Vector2(10, y), Color.White);
-            y += lineHeight;
-            DrawText(spriteBatch, $"Nodes: {worldMap.Nodes.Count}", new Vector2(10, y), Color.White);
-            y += lineHeight;
-            DrawText(spriteBatch, $"Zoom: {cameraZoom:F2}x (Mouse Wheel)", new Vector2(10, y), Color.White);
-            y += lineHeight;
-
-            // Controls
-            y += lineHeight;
-            DrawText(spriteBatch, "Controls:", new Vector2(10, y), Color.Cyan);
-            y += lineHeight;
-            DrawText(spriteBatch, "  1=Select  2=Add  3=Connect  4=Delete", new Vector2(10, y), Color.Gray);
-            y += lineHeight;
-            DrawText(spriteBatch, "  Right Click=Edit Properties  Middle Mouse=Pan", new Vector2(10, y), Color.Gray);
-            y += lineHeight;
-            DrawText(spriteBatch, "  Ctrl+S=Save  Ctrl+O=Load  ESC=Exit", new Vector2(10, y), Color.Gray);
-
-            // Selected node properties
-            if (selectedNode != null)
-            {
-                int propX = screenBounds.Width - 300;
-                int propY = 10;
-                DrawRectangle(spriteBatch, new Rectangle(propX - 10, propY - 10, 290, 200), new Color(0, 0, 0, 200));
-
-                DrawText(spriteBatch, "Selected Node:", new Vector2(propX, propY), Color.Yellow);
-                propY += lineHeight;
-                DrawText(spriteBatch, $"ID: {selectedNode.Id}", new Vector2(propX, propY), Color.White);
-                propY += lineHeight;
-                DrawText(spriteBatch, $"Name: {selectedNode.LevelName}", new Vector2(propX, propY), Color.White);
-                propY += lineHeight;
-                DrawText(spriteBatch, $"Unlocked: {selectedNode.IsUnlocked}", new Vector2(propX, propY), Color.White);
-                propY += lineHeight;
-                DrawText(spriteBatch, $"Completed: {selectedNode.IsCompleted}", new Vector2(propX, propY), Color.White);
-                propY += lineHeight;
-                DrawText(spriteBatch, $"Stars: {selectedNode.StarsEarned}/3", new Vector2(propX, propY), Color.White);
-                propY += lineHeight;
-                DrawText(spriteBatch, $"Connections: {selectedNode.ConnectedNodeIds.Count}", new Vector2(propX, propY), Color.White);
-            }
-
-            // Name editing overlay
-            if (isEditingNodeName)
-            {
-                int boxWidth = 400;
-                int boxHeight = 100;
-                int boxX = (screenBounds.Width - boxWidth) / 2;
-                int boxY = (screenBounds.Height - boxHeight) / 2;
-
-                DrawRectangle(spriteBatch, new Rectangle(boxX, boxY, boxWidth, boxHeight), new Color(0, 0, 0, 240));
-                DrawRectangle(spriteBatch, new Rectangle(boxX, boxY, boxWidth, boxHeight), Color.White, filled: false, thickness: 2);
-
-                DrawText(spriteBatch, "Edit Level Name:", new Vector2(boxX + 10, boxY + 10), Color.Yellow);
-                DrawText(spriteBatch, editingNodeName + "_", new Vector2(boxX + 10, boxY + 40), Color.White);
-                DrawText(spriteBatch, "Press ENTER to confirm, ESC to cancel", new Vector2(boxX + 10, boxY + 70), Color.Gray);
-            }
+            return Matrix.CreateTranslation(-cameraPosition.X, -cameraPosition.Y, 0) *
+                   Matrix.CreateScale(cameraZoom);
         }
 
-        private void DrawText(SpriteBatch spriteBatch, string text, Vector2 position, Color color)
+        private void DrawRectangleOutline(SpriteBatch spriteBatch, Rectangle rect, Color color, int thickness)
         {
-            if (font != null)
-            {
-                spriteBatch.DrawString(font, text, position, color);
-            }
-        }
-
-        private void DrawRectangle(SpriteBatch spriteBatch, Rectangle rect, Color color, bool filled = true, int thickness = 1)
-        {
-            if (filled)
-            {
-                spriteBatch.Draw(pixelTexture, rect, color);
-            }
-            else
-            {
-                // Top
-                spriteBatch.Draw(pixelTexture, new Rectangle(rect.X, rect.Y, rect.Width, thickness), color);
-                // Bottom
-                spriteBatch.Draw(pixelTexture, new Rectangle(rect.X, rect.Y + rect.Height - thickness, rect.Width, thickness), color);
-                // Left
-                spriteBatch.Draw(pixelTexture, new Rectangle(rect.X, rect.Y, thickness, rect.Height), color);
-                // Right
-                spriteBatch.Draw(pixelTexture, new Rectangle(rect.X + rect.Width - thickness, rect.Y, thickness, rect.Height), color);
-            }
+            spriteBatch.Draw(pixelTexture, new Rectangle(rect.X, rect.Y, rect.Width, thickness), color);
+            spriteBatch.Draw(pixelTexture, new Rectangle(rect.X, rect.Bottom - thickness, rect.Width, thickness), color);
+            spriteBatch.Draw(pixelTexture, new Rectangle(rect.X, rect.Y, thickness, rect.Height), color);
+            spriteBatch.Draw(pixelTexture, new Rectangle(rect.Right - thickness, rect.Y, thickness, rect.Height), color);
         }
 
         private void DrawLine(SpriteBatch spriteBatch, Vector2 start, Vector2 end, Color color, int thickness)
@@ -712,7 +792,6 @@ namespace PlatformerEngine.Core.Editor
 
                 if (filled)
                 {
-                    // Draw triangle from center to edge
                     DrawLine(spriteBatch, center, p1, color, (int)radius);
                 }
                 else
@@ -726,6 +805,140 @@ namespace PlatformerEngine.Core.Editor
         {
             base.OnExit();
             pixelTexture?.Dispose();
+        }
+
+        // Undo/Redo Actions for World Map Editor
+
+        private class AddNodeAction : IEditorAction
+        {
+            private List<LevelNode> nodes;
+            private LevelNode node;
+
+            public string Description => $"Add node {node.LevelName}";
+
+            public AddNodeAction(List<LevelNode> nodes, LevelNode node)
+            {
+                this.nodes = nodes;
+                this.node = node;
+            }
+
+            public void Execute()
+            {
+                if (!nodes.Contains(node))
+                {
+                    nodes.Add(node);
+                }
+            }
+
+            public void Undo()
+            {
+                nodes.Remove(node);
+            }
+        }
+
+        private class DeleteNodeAction : IEditorAction
+        {
+            private List<LevelNode> nodes;
+            private LevelNode node;
+            private int index;
+            private List<string> connections;
+
+            public string Description => $"Delete node {node.LevelName}";
+
+            public DeleteNodeAction(List<LevelNode> nodes, LevelNode node)
+            {
+                this.nodes = nodes;
+                this.node = node;
+                this.index = nodes.IndexOf(node);
+                this.connections = new List<string>(node.ConnectedNodeIds);
+            }
+
+            public void Execute()
+            {
+                // Remove all connections to this node
+                foreach (var otherNode in nodes)
+                {
+                    otherNode.ConnectedNodeIds.Remove(node.Id);
+                }
+                nodes.Remove(node);
+            }
+
+            public void Undo()
+            {
+                if (index >= 0 && index <= nodes.Count)
+                {
+                    nodes.Insert(index, node);
+                }
+                else
+                {
+                    nodes.Add(node);
+                }
+
+                // Restore connections
+                node.ConnectedNodeIds.Clear();
+                foreach (var connId in connections)
+                {
+                    node.ConnectedNodeIds.Add(connId);
+                }
+            }
+        }
+
+        private class MoveNodeAction : IEditorAction
+        {
+            private LevelNode node;
+            private Vector2 oldPosition;
+            private Vector2 newPosition;
+
+            public string Description => $"Move node {node.LevelName}";
+
+            public MoveNodeAction(LevelNode node, Vector2 oldPosition, Vector2 newPosition)
+            {
+                this.node = node;
+                this.oldPosition = oldPosition;
+                this.newPosition = newPosition;
+            }
+
+            public void Execute()
+            {
+                node.Position = newPosition;
+            }
+
+            public void Undo()
+            {
+                node.Position = oldPosition;
+            }
+        }
+
+        private class ConnectNodesAction : IEditorAction
+        {
+            private LevelNode nodeA;
+            private LevelNode nodeB;
+
+            public string Description => $"Connect {nodeA.LevelName} to {nodeB.LevelName}";
+
+            public ConnectNodesAction(LevelNode nodeA, LevelNode nodeB)
+            {
+                this.nodeA = nodeA;
+                this.nodeB = nodeB;
+            }
+
+            public void Execute()
+            {
+                if (!nodeA.ConnectedNodeIds.Contains(nodeB.Id))
+                {
+                    nodeA.ConnectedNodeIds.Add(nodeB.Id);
+                }
+                if (!nodeB.ConnectedNodeIds.Contains(nodeA.Id))
+                {
+                    nodeB.ConnectedNodeIds.Add(nodeA.Id);
+                }
+            }
+
+            public void Undo()
+            {
+                nodeA.ConnectedNodeIds.Remove(nodeB.Id);
+                nodeB.ConnectedNodeIds.Remove(nodeA.Id);
+            }
         }
     }
 }
